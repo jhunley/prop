@@ -195,6 +195,38 @@ sub dispatch_request {
 
     [ 200, ['Content-Type' => 'application/json'], [encode_json($stations)] ];
   },
+  'GET + /mixscale_essn.json + ?series~&var~&points~&max_span~' => sub {
+    my ($self, $series, $var, $max_points, $max_span) = @_;
+    $var = 'sfi' unless defined $var;
+    $series = '6h' unless defined $series;
+    $max_points = 4000 unless defined $max_points;
+
+    my $sth = $dbh->prepare(q{
+      SELECT time, sfi, ssn FROM essn WHERE series=? ORDER BY time ASC
+    });
+    my $rows = $dbh->selectall_arrayref($sth, { Slice => {} }, $series);
+    my $ts = [ map { $strp->parse_datetime($_->{time})->epoch } @$rows ];
+    if (defined $max_span) {
+      my $secs = $max_span * 86400;
+      while ($ts->[-1] - $ts->[0] > $secs) {
+        shift @$ts;
+        shift @$rows;
+      }
+    }
+
+    my $span = $ts->[-1] - $ts->[0];
+
+    while (@$rows > $max_points) {
+      my $idx = int rand @$rows;
+      my $prob = ($ts->[-1] - $ts->[$idx]) / $span + 0.05;
+      if (rand(1) < $prob) {
+        splice @$rows, $idx, 1, ();
+        splice @$ts, $idx, 1, ();
+      }
+    }
+
+    [ 200, ['Content-Type' => 'application/json'], [encode_json([map [ $ts->[$_], 0+$rows->[$_]{$var} ], 0..$#$rows ])] ];
+  },
 }
 
 PropHist->run_if_script;
